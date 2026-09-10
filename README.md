@@ -1,90 +1,162 @@
 # KarmaWall
 
-A rule-based outbound firewall for Windows, built on WinDivert. Default
-policy is **block everything**, with an allow-list you control in
-`rules.json`. Every decision (allowed or blocked) is logged to
-`karmawall.log` and the console.
+**A lightweight, rule-based network firewall for controlling outbound traffic.**
 
-> **Use responsibly.** This tool can intercept and drop all outbound
-> traffic on the machine it runs on. Test it in a VM before running on
-> a machine you rely on, and don't use it to bypass network policies
-> you don't have authority over.
+KarmaWall is a Windows firewall built on WinDivert. Its default policy is
+**block**, with an allow/block rule set controlled through `rules.json`.
+Every packet decision is logged to `karmawall.log` and the console.
+
+> **Use responsibly.** KarmaWall can intercept and drop outbound traffic on
+the machine where it runs. Test it in a VM first and only use it on systems
+and networks you are authorized to control.
 
 ## Why WinDivert
 
-Windows does not allow arbitrary raw-socket packet blocking in user
-mode (Microsoft locked this down since XP SP2). Intercepting and
-dropping packets before they leave the machine requires either a
-signed kernel driver, or a WFP-based user-mode diversion layer —
-which is what WinDivert provides. You still own 100% of the firewall
-*logic* (rule matching, logging, policy) — WinDivert just supplies the
-packet interception plumbing that Windows otherwise reserves for
-kernel-mode code.
+Windows does not provide a simple user-mode API for arbitrary packet
+interception and dropping. WinDivert supplies the packet interception layer;
+KarmaWall owns the policy, rule matching, logging, and decision logic.
+
+## Requirements
+
+- Windows
+- Python 3.11 or newer
+- Administrator privileges
+- WinDivert runtime/driver support supplied through `pydivert`
 
 ## Setup
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-You also need the WinDivert driver DLL/sys files, which `pydivert`
-downloads/bundles automatically on first import in most cases. If you
-hit a driver-load error, grab the WinDivert binaries from
-https://github.com/basil00/WinDivert and place `WinDivert.dll` /
-`WinDivert64.sys` next to `main.py`.
+`requirements.txt` pins the Python dependency used for packet interception.
+If WinDivert cannot load on your system, follow the WinDivert installation
+guidance for your environment.
 
 ## Running
 
-Must run as **Administrator** — WinDivert requires elevated privileges
-to open a packet-interception handle.
+KarmaWall must run as **Administrator** because WinDivert requires elevated
+privileges for packet interception.
+
+Normal enforcement mode:
 
 ```powershell
 python main.py
 ```
 
-Ctrl+C stops it. Networking returns to normal immediately — nothing
-stays half-blocked.
+Dry-run mode records what the firewall **would** block without enforcing the
+block decision:
 
-## Configuring rules
+```powershell
+python main.py --dry-run
+```
 
-Edit `rules.json`. Each rule can match on `ip`, `port`, `proto`, or any
-combination — omitted fields are wildcards. Rules are checked top to
-bottom; first match wins. Anything that matches no rule falls through
-to `DEFAULT_POLICY` in `config.py`.
+Use dry-run mode first when validating a new ruleset. Ctrl+C requests a clean
+shutdown and the WinDivert handle is closed.
 
-Example — allow only HTTPS to one specific host, block everything
-else:
+## Rule configuration
+
+Rules live in `rules.json` and are checked **top to bottom**. The first
+matching rule wins. Any field other than `id` and `action` may be omitted and
+is treated as a wildcard.
+
+Each rule requires:
+
+| Field | Required | Description |
+|---|---|---|
+| `id` | Yes | Unique audit identifier, 1-64 characters using letters, digits, `.`, `_`, or `-` |
+| `action` | Yes | `allow` or `block` |
+| `ip` | No | Exact IPv4/IPv6 address or CIDR network |
+| `port` | No | Destination port from 1 to 65535 |
+| `proto` | No | `tcp` or `udp` |
+| `note` | No | Human-readable explanation for the rule |
+
+Rule IDs must be unique within the file. Invalid fields, malformed values,
+duplicate IDs, and malformed JSON are rejected before the rules are loaded.
+
+### Example
 
 ```json
 [
-    { "action": "allow", "port": 53, "proto": "udp", "note": "DNS" },
-    { "action": "allow", "ip": "93.184.216.34", "port": 443, "proto": "tcp" }
+    {
+        "id": "allow-google-dns",
+        "action": "allow",
+        "ip": "8.8.8.8",
+        "port": 53,
+        "proto": "udp",
+        "note": "Allow DNS queries to the documented sample resolver"
+    },
+    {
+        "id": "allow-example-https",
+        "action": "allow",
+        "ip": "93.184.216.34",
+        "port": 443,
+        "proto": "tcp",
+        "note": "Allow HTTPS to example.com over TCP/443"
+    },
+    {
+        "id": "block-example-other",
+        "action": "block",
+        "ip": "93.184.216.34",
+        "note": "Block other outbound traffic to example.com"
+    }
 ]
 ```
 
-With `DEFAULT_POLICY = "block"` in `config.py`, anything not matching
-one of those two rules is dropped and logged.
+CIDR networks are supported for range-based policies. For example:
 
-## Files
+```json
+{
+    "id": "block-private-subnet",
+    "action": "block",
+    "ip": "192.168.1.0/24",
+    "note": "Block outbound traffic to this private subnet"
+}
+```
+
+With `DEFAULT_POLICY = "block"` in `config.py`, traffic that matches no
+rule is blocked.
+
+## Logging
+
+KarmaWall writes structured audit messages to both the console and
+`karmawall.log`. The file logger rotates at 5 MiB and keeps three backups so
+long-running sessions do not grow a single log file indefinitely.
+
+Each decision includes the matched rule ID when a rule is responsible for the
+outcome, making the log easier to correlate with the active policy.
+
+## Project structure
 
 | File | Purpose |
 |---|---|
-| `main.py` | Packet loop — ties everything together, run this |
-| `config.py` | Default policy, WinDivert filter, file paths |
-| `rules.py` | Rule engine — loads and matches `rules.json` |
-| `rules.json` | Your actual rule definitions |
-| `logger.py` | Logging setup (file + console) |
-| `karmawall.log` | Generated at runtime — every decision, timestamped |
+| `main.py` | Packet interception loop and enforcement/dry-run mode |
+| `config.py` | Default policy, WinDivert filter, and project-relative paths |
+| `rules.py` | Rule validation, loading, CIDR matching, and decisions |
+| `rules.json` | Active firewall policy |
+| `packet.py` | Packet metadata extraction independent of the rule engine |
+| `logger.py` | Console and rotating audit logging |
+| `tests/` | Unit tests for rule, packet, logger, and CLI behaviour |
+| `.github/workflows/ci.yml` | Automated Windows test workflow |
+
+## Testing
+
+Run the test suite with:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+GitHub Actions runs the same test suite on Windows for pushes to `main` and
+hardening branches and for pull requests targeting `main`.
 
 ## Extending it
 
-- **Persist as a service** — wrap `main()` with `pywin32`'s
-  `win32serviceutil.ServiceFramework` to run at boot without a console.
-- **Inbound too** — change `WINDIVERT_FILTER` in `config.py` to
-  `"ip"` (drops the `outbound` restriction) and branch logic on
-  `packet.is_outbound`.
-- **Live reload** — call `engine.reload()` on a timer or file-watch so
-  editing `rules.json` takes effect without restarting.
-- **CIDR/subnet matching** — `rules.py`'s `Rule.matches()` currently
-  does exact IP match; swap in `ipaddress.ip_network()` checks for
-  range-based rules.
+- **Persist as a service:** wrap `main()` with a Windows service framework so
+  KarmaWall can start automatically.
+- **Inbound filtering:** broaden `WINDIVERT_FILTER` and incorporate packet
+  direction into the policy engine.
+- **Live reload:** call `engine.reload()` from a controlled file-watch or
+  timer so policy changes can be applied without restarting the process.
+- **Richer policy matching:** add additional validated fields only when they
+  can be enforced and covered by tests.
