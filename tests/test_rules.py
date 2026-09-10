@@ -48,6 +48,14 @@ class TestRuleValidation(unittest.TestCase):
         with self.assertRaises(RuleValidationError):
             Rule.from_dict({"port": 443})
 
+    def test_cidr_network_is_accepted(self):
+        rule = Rule(action="allow", ip="192.0.2.0/24")
+        self.assertEqual(rule.ip, "192.0.2.0/24")
+
+    def test_cidr_with_host_bits_is_rejected(self):
+        with self.assertRaises(RuleValidationError):
+            Rule(action="allow", ip="192.0.2.10/24")
+
 
 class TestRuleMatching(unittest.TestCase):
     def test_matching_all_fields(self):
@@ -65,6 +73,17 @@ class TestRuleMatching(unittest.TestCase):
         self.assertTrue(rule.matches("192.0.2.10", 443, "tcp"))
         self.assertTrue(rule.matches("198.51.100.20", 443, "udp"))
         self.assertFalse(rule.matches("192.0.2.10", 80, "tcp"))
+
+    def test_cidr_matches_members_and_rejects_outside_addresses(self):
+        rule = Rule(action="allow", ip="192.0.2.0/24")
+        self.assertTrue(rule.matches("192.0.2.1", None, "tcp"))
+        self.assertTrue(rule.matches("192.0.2.254", None, "tcp"))
+        self.assertFalse(rule.matches("192.0.3.1", None, "tcp"))
+
+    def test_ipv6_exact_address_still_matches(self):
+        rule = Rule(action="allow", ip="2001:db8::1")
+        self.assertTrue(rule.matches("2001:db8::1", None, "tcp"))
+        self.assertFalse(rule.matches("2001:db8::2", None, "tcp"))
 
 
 class TestRuleEngine(unittest.TestCase):
