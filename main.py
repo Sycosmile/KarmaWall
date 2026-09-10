@@ -20,6 +20,7 @@ except ImportError:
 
 import config
 from logger import setup_logger
+from packet import extract_metadata
 from rules import RuleEngine, RuleValidationError
 
 running = True
@@ -83,24 +84,21 @@ def main():
                     break
 
                 try:
-                    proto = (
-                        "tcp" if packet.tcp
-                        else "udp" if packet.udp
-                        else "other"
+                    metadata = extract_metadata(packet)
+                    action, matched_rule = engine.decide(
+                        metadata.destination_ip,
+                        metadata.destination_port,
+                        metadata.protocol,
                     )
-                    dst_ip = packet.dst_addr
-                    dst_port = packet.dst_port if (packet.tcp or packet.udp) else None
-
-                    action, matched_rule = engine.decide(dst_ip, dst_port, proto)
 
                     if action == "block":
                         reason = matched_rule.note if matched_rule else "default policy"
                         log.warning(
                             "BLOCKED  %s -> %s:%s [%s]  (%s)",
-                            packet.src_addr,
-                            dst_ip,
-                            dst_port,
-                            proto,
+                            metadata.source_ip,
+                            metadata.destination_ip,
+                            metadata.destination_port,
+                            metadata.protocol,
                             reason,
                         )
                         # Drop it: simply don't call divert.send().
@@ -108,10 +106,10 @@ def main():
 
                     log.info(
                         "ALLOWED  %s -> %s:%s [%s]",
-                        packet.src_addr,
-                        dst_ip,
-                        dst_port,
-                        proto,
+                        metadata.source_ip,
+                        metadata.destination_ip,
+                        metadata.destination_port,
+                        metadata.protocol,
                     )
 
                     try:
@@ -119,8 +117,8 @@ def main():
                     except OSError as exc:
                         log.error(
                             "Failed to reinject allowed packet to %s:%s: %s",
-                            dst_ip,
-                            dst_port,
+                            metadata.destination_ip,
+                            metadata.destination_port,
                             exc,
                         )
                         return 1
