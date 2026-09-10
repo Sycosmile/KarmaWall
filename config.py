@@ -18,10 +18,9 @@ BASE_DIR = Path(__file__).resolve().parent
 
 DEFAULT_POLICY = "block"
 
-# WinDivert filter string: which traffic even reaches our packet loop.
-# "outbound and ip" = all outbound IPv4 traffic. You can narrow this,
-# e.g. "outbound and tcp" to only look at TCP.
-WINDIVERT_FILTER = "outbound and ip"
+# WinDivert filter string: all outbound IPv4 and IPv6 traffic reaches the
+# KarmaWall decision loop. The rule engine decides what is allowed or blocked.
+WINDIVERT_FILTER = "outbound and (ip or ipv6)"
 
 # Resolve project files relative to this module instead of the process'
 # current working directory. This keeps behaviour consistent regardless
