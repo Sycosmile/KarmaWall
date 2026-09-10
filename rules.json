@@ -1,5 +1,6 @@
 [
     {
+        "id": "allow-google-dns",
         "action": "allow",
         "ip": "8.8.8.8",
         "port": 53,
@@ -7,6 +8,7 @@
         "note": "Allow DNS queries to the documented sample resolver"
     },
     {
+        "id": "allow-example-https",
         "action": "allow",
         "ip": "93.184.216.34",
         "port": 443,
@@ -14,6 +16,7 @@
         "note": "Allow HTTPS to example.com over TCP/443"
     },
     {
+        "id": "block-example-other",
         "action": "block",
         "ip": "93.184.216.34",
         "note": "Block other outbound traffic to example.com"
