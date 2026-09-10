@@ -1,20 +1,21 @@
 [
     {
         "action": "allow",
+        "ip": "8.8.8.8",
         "port": 53,
         "proto": "udp",
-        "note": "DNS resolution"
+        "note": "Allow DNS queries to the documented sample resolver"
     },
     {
         "action": "allow",
         "ip": "93.184.216.34",
         "port": 443,
         "proto": "tcp",
-        "note": "example.com - sample allow rule, replace with your own"
+        "note": "Allow HTTPS to example.com over TCP/443"
     },
     {
         "action": "block",
         "ip": "93.184.216.34",
-        "note": "block everything else to this host outside 443"
+        "note": "Block other outbound traffic to example.com"
     }
 ]
