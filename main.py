@@ -9,6 +9,7 @@ machine's normal networking resumes immediately — nothing is left
 half-blocked.
 """
 
+import argparse
 import signal
 import sys
 
@@ -32,9 +33,21 @@ def handle_sigint(sig, frame):
     running = False
 
 
-def main():
+def build_parser():
+    """Build the KarmaWall command-line interface."""
+    parser = argparse.ArgumentParser(description="KarmaWall Windows firewall")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="log firewall decisions without dropping blocked packets",
+    )
+    return parser
+
+
+def main(argv=None):
     global running
     running = True
+    args = build_parser().parse_args(argv)
 
     if sys.platform != "win32":
         print("This firewall uses WinDivert and only runs on Windows.")
@@ -51,7 +64,8 @@ def main():
         log.error("Invalid firewall configuration: %s", exc)
         return 1
 
-    log.info("Starting KarmaWall. Default policy = %s", config.DEFAULT_POLICY)
+    mode = "DRY-RUN" if args.dry_run else "ENFORCEMENT"
+    log.info("Starting KarmaWall in %s mode. Default policy = %s", mode, config.DEFAULT_POLICY)
     log.info("Loaded %d rule(s) from %s", len(engine.rules), config.RULES_FILE)
     for rule in engine.rules:
         log.info("  %s", rule)
@@ -91,32 +105,47 @@ def main():
                         metadata.protocol,
                     )
 
+                    rule_id = matched_rule.id if matched_rule else "default-policy"
+                    reason = matched_rule.note if matched_rule else "default policy"
+
                     if action == "block":
-                        reason = matched_rule.note if matched_rule else "default policy"
-                        log.warning(
-                            "BLOCKED  %s -> %s:%s [%s]  (%s)",
+                        if args.dry_run:
+                            log.warning(
+                                "DRY-RUN WOULD-BLOCK rule=%s %s -> %s:%s [%s] (%s)",
+                                rule_id,
+                                metadata.source_ip,
+                                metadata.destination_ip,
+                                metadata.destination_port,
+                                metadata.protocol,
+                                reason,
+                            )
+                        else:
+                            log.warning(
+                                "BLOCKED rule=%s %s -> %s:%s [%s] (%s)",
+                                rule_id,
+                                metadata.source_ip,
+                                metadata.destination_ip,
+                                metadata.destination_port,
+                                metadata.protocol,
+                                reason,
+                            )
+                            # Drop it: simply don't call divert.send().
+                            continue
+                    else:
+                        log.info(
+                            "ALLOWED rule=%s %s -> %s:%s [%s]",
+                            rule_id,
                             metadata.source_ip,
                             metadata.destination_ip,
                             metadata.destination_port,
                             metadata.protocol,
-                            reason,
                         )
-                        # Drop it: simply don't call divert.send().
-                        continue
-
-                    log.info(
-                        "ALLOWED  %s -> %s:%s [%s]",
-                        metadata.source_ip,
-                        metadata.destination_ip,
-                        metadata.destination_port,
-                        metadata.protocol,
-                    )
 
                     try:
                         divert.send(packet)
                     except OSError as exc:
                         log.error(
-                            "Failed to reinject allowed packet to %s:%s: %s",
+                            "Failed to reinject packet to %s:%s: %s",
                             metadata.destination_ip,
                             metadata.destination_port,
                             exc,
