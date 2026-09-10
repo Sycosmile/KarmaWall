@@ -11,6 +11,11 @@ leave your machine). Switch to "allow" for a normal day-to-day
 firewall that just blocks specific known-bad hosts.
 """
 
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent
+
 DEFAULT_POLICY = "block"
 
 # WinDivert filter string: which traffic even reaches our packet loop.
@@ -18,8 +23,11 @@ DEFAULT_POLICY = "block"
 # e.g. "outbound and tcp" to only look at TCP.
 WINDIVERT_FILTER = "outbound and ip"
 
-RULES_FILE = "rules.json"
-LOG_FILE = "karmawall.log"
+# Resolve project files relative to this module instead of the process'
+# current working directory. This keeps behaviour consistent regardless
+# of where `python main.py` is launched from.
+RULES_FILE = BASE_DIR / "rules.json"
+LOG_FILE = BASE_DIR / "karmawall.log"
 
 # WinDivert priority — lower runs first. 0 is fine unless you're
 # layering multiple WinDivert handles.
