@@ -9,6 +9,7 @@ from rules import Rule, RuleEngine, RuleValidationError
 class TestRuleValidation(unittest.TestCase):
     def test_valid_rule_is_normalized(self):
         rule = Rule(
+            id="allow-example-https",
             action=" ALLOW ",
             ip=" 93.184.216.34 ",
             port=443,
@@ -16,11 +17,18 @@ class TestRuleValidation(unittest.TestCase):
             note=" Example HTTPS ",
         )
 
+        self.assertEqual(rule.id, "allow-example-https")
         self.assertEqual(rule.action, "allow")
         self.assertEqual(rule.ip, "93.184.216.34")
         self.assertEqual(rule.port, 443)
         self.assertEqual(rule.proto, "tcp")
         self.assertEqual(rule.note, "Example HTTPS")
+
+    def test_invalid_rule_id_is_rejected(self):
+        for rule_id in ("", "bad id", "bad/id", "a" * 65, 123):
+            with self.subTest(rule_id=rule_id):
+                with self.assertRaises(RuleValidationError):
+                    Rule(action="allow", id=rule_id)
 
     def test_invalid_action_is_rejected(self):
         with self.assertRaises(RuleValidationError):
@@ -42,11 +50,15 @@ class TestRuleValidation(unittest.TestCase):
 
     def test_unknown_field_is_rejected(self):
         with self.assertRaises(RuleValidationError):
-            Rule.from_dict({"action": "allow", "hostname": "example.com"})
+            Rule.from_dict({"id": "test-rule", "action": "allow", "hostname": "example.com"})
+
+    def test_missing_id_is_rejected(self):
+        with self.assertRaises(RuleValidationError):
+            Rule.from_dict({"action": "allow"})
 
     def test_missing_action_is_rejected(self):
         with self.assertRaises(RuleValidationError):
-            Rule.from_dict({"port": 443})
+            Rule.from_dict({"id": "test-rule"})
 
     def test_cidr_network_is_accepted(self):
         rule = Rule(action="allow", ip="192.0.2.0/24")
@@ -97,8 +109,8 @@ class TestRuleEngine(unittest.TestCase):
     def test_first_match_wins(self):
         path = self.write_rules(
             [
-                {"action": "block", "ip": "192.0.2.10", "port": 443, "proto": "tcp"},
-                {"action": "allow", "ip": "192.0.2.10", "port": 443, "proto": "tcp"},
+                {"id": "block-first", "action": "block", "ip": "192.0.2.10", "port": 443, "proto": "tcp"},
+                {"id": "allow-second", "action": "allow", "ip": "192.0.2.10", "port": 443, "proto": "tcp"},
             ]
         )
         engine = RuleEngine(path, default_policy="allow")
@@ -106,10 +118,11 @@ class TestRuleEngine(unittest.TestCase):
         action, rule = engine.decide("192.0.2.10", 443, "tcp")
 
         self.assertEqual(action, "block")
+        self.assertEqual(rule.id, "block-first")
         self.assertIs(engine.rules[0], rule)
 
     def test_default_policy_is_used_when_no_rule_matches(self):
-        path = self.write_rules([{"action": "allow", "port": 443, "proto": "tcp"}])
+        path = self.write_rules([{"id": "allow-https", "action": "allow", "port": 443, "proto": "tcp"}])
         engine = RuleEngine(path, default_policy="block")
 
         action, rule = engine.decide("192.0.2.10", 80, "tcp")
@@ -129,10 +142,23 @@ class TestRuleEngine(unittest.TestCase):
         self.assertIn("Invalid JSON", str(ctx.exception))
 
     def test_rules_file_must_be_array(self):
-        path = self.write_rules({"action": "allow"})
+        path = self.write_rules({"id": "allow-https", "action": "allow"})
 
         with self.assertRaises(RuleValidationError):
             RuleEngine(path)
+
+    def test_duplicate_rule_ids_are_rejected(self):
+        path = self.write_rules(
+            [
+                {"id": "duplicate", "action": "allow", "port": 443},
+                {"id": "duplicate", "action": "block", "port": 80},
+            ]
+        )
+
+        with self.assertRaises(RuleValidationError) as ctx:
+            RuleEngine(path)
+
+        self.assertIn("Duplicate rule id", str(ctx.exception))
 
     def test_invalid_default_policy_is_rejected(self):
         path = self.write_rules([])
@@ -141,16 +167,17 @@ class TestRuleEngine(unittest.TestCase):
             RuleEngine(path, default_policy="deny")
 
     def test_reload_replaces_rules(self):
-        path = self.write_rules([{"action": "block", "port": 80}])
+        path = self.write_rules([{"id": "block-http", "action": "block", "port": 80}])
         engine = RuleEngine(path)
 
         path.write_text(
-            json.dumps([{"action": "allow", "port": 443, "proto": "tcp"}]),
+            json.dumps([{"id": "allow-https", "action": "allow", "port": 443, "proto": "tcp"}]),
             encoding="utf-8",
         )
         engine.reload()
 
         self.assertEqual(len(engine.rules), 1)
+        self.assertEqual(engine.rules[0].id, "allow-https")
         self.assertEqual(engine.rules[0].action, "allow")
         self.assertEqual(engine.rules[0].port, 443)
 
