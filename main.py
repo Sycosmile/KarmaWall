@@ -108,7 +108,11 @@ def main(argv=None):
         print("This firewall uses WinDivert and only runs on Windows.")
         return 1
 
-    log = setup_logger(config.LOG_FILE)
+    try:
+        log = setup_logger(config.LOG_FILE)
+    except OSError as exc:
+        print(f"Failed to initialize logging: {exc}", file=sys.stderr)
+        return 1
 
     try:
         engine = RuleEngine(
