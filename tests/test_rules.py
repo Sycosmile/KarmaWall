@@ -97,6 +97,13 @@ class TestRuleMatching(unittest.TestCase):
         self.assertTrue(rule.matches("2001:db8::1", None, "tcp"))
         self.assertFalse(rule.matches("2001:db8::2", None, "tcp"))
 
+    def test_invalid_runtime_protocol_returns_false(self):
+        rule = Rule(action="allow", proto="tcp")
+
+        for proto in (None, 6, object()):
+            with self.subTest(proto=proto):
+                self.assertFalse(rule.matches("192.0.2.10", 443, proto))
+
 
 class TestRuleEngine(unittest.TestCase):
     def write_rules(self, data):
