@@ -167,8 +167,11 @@ class Rule:
                 return False
         if self.port is not None and self.port != dst_port:
             return False
-        if self.proto is not None and self.proto != proto.lower():
-            return False
+        if self.proto is not None:
+            if not isinstance(proto, str):
+                return False
+            if self.proto != proto.lower():
+                return False
         return True
 
     def __repr__(self):
