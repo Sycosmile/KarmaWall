@@ -1,8 +1,8 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from main import build_parser, process_packet
+from main import build_parser, main, process_packet
 from rules import RuleEngine
 
 
@@ -126,6 +126,16 @@ class TestPacketProcessing(unittest.TestCase):
 
         self.assertFalse(should_reinject)
         self.assertIn("default-policy", log.warning.call_args.args)
+
+
+class TestStartup(unittest.TestCase):
+    def test_logger_initialization_failure_returns_error(self):
+        with patch("main.sys.platform", "win32"), patch(
+            "main.setup_logger", side_effect=OSError("permission denied")
+        ):
+            result = main([])
+
+        self.assertEqual(result, 1)
 
 
 if __name__ == "__main__":
