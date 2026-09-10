@@ -1,13 +1,12 @@
-"""
-Rule engine for KarmaWall.
+"""Rule engine for KarmaWall.
 
 A rule looks like:
 
     {
         "action": "allow" | "block",
-        "ip": "93.184.216.34",       # optional, exact match
-        "port": 443,                  # optional, exact match on dst port
-        "proto": "tcp",              # optional: tcp / udp
+        "ip": "93.184.216.0/24",   # optional, exact IP or CIDR network
+        "port": 443,               # optional, exact match on dst port
+        "proto": "tcp",            # optional: tcp / udp
         "note": "Example HTTPS rule"
     }
 
@@ -39,7 +38,7 @@ class RuleValidationError(ValueError):
 class Rule:
     def __init__(self, action, ip=None, port=None, proto=None, note=""):
         self.action = self._validate_action(action)
-        self.ip = self._validate_ip(ip)
+        self.ip, self.ip_network = self._validate_ip(ip)
         self.port = self._validate_port(port)
         self.proto = self._validate_protocol(proto)
         self.note = self._validate_note(note)
@@ -60,16 +59,20 @@ class Rule:
     @staticmethod
     def _validate_ip(ip):
         if ip is None:
-            return None
+            return None, None
         if not isinstance(ip, str) or not ip.strip():
             raise RuleValidationError("Rule IP must be a non-empty string")
 
         ip = ip.strip()
         try:
-            ipaddress.ip_address(ip)
+            if "/" in ip:
+                network = ipaddress.ip_network(ip, strict=True)
+            else:
+                address = ipaddress.ip_address(ip)
+                network = ipaddress.ip_network(address.exploded + "/" + str(address.max_prefixlen))
         except ValueError as exc:
-            raise RuleValidationError(f"Invalid IP address: {ip!r}") from exc
-        return ip
+            raise RuleValidationError(f"Invalid IP address or CIDR network: {ip!r}") from exc
+        return ip, network
 
     @staticmethod
     def _validate_port(port):
@@ -130,8 +133,12 @@ class Rule:
             raise RuleValidationError(f"Invalid rule{location}: {exc}") from exc
 
     def matches(self, dst_ip, dst_port, proto):
-        if self.ip is not None and self.ip != dst_ip:
-            return False
+        if self.ip_network is not None:
+            try:
+                if ipaddress.ip_address(dst_ip) not in self.ip_network:
+                    return False
+            except ValueError:
+                return False
         if self.port is not None and self.port != dst_port:
             return False
         if self.proto is not None and self.proto != proto.lower():
