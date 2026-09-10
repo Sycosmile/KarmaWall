@@ -44,6 +44,61 @@ def build_parser():
     return parser
 
 
+def process_packet(packet, engine, log, dry_run=False):
+    """Evaluate one intercepted packet and log the resulting decision.
+
+    Returns True when the packet should be re-injected into the network path.
+    Returns False when enforcement mode should drop the packet.
+
+    Packet extraction and rule evaluation are kept separate from the
+    WinDivert receive/send loop so this decision path can be unit-tested
+    without a live driver handle.
+    """
+    metadata = extract_metadata(packet)
+    action, matched_rule = engine.decide(
+        metadata.destination_ip,
+        metadata.destination_port,
+        metadata.protocol,
+    )
+
+    rule_id = matched_rule.id if matched_rule else "default-policy"
+    reason = matched_rule.note if matched_rule else "default policy"
+
+    if action == "block":
+        if dry_run:
+            log.warning(
+                "DRY-RUN WOULD-BLOCK rule=%s %s -> %s:%s [%s] (%s)",
+                rule_id,
+                metadata.source_ip,
+                metadata.destination_ip,
+                metadata.destination_port,
+                metadata.protocol,
+                reason,
+            )
+            return True
+
+        log.warning(
+            "BLOCKED rule=%s %s -> %s:%s [%s] (%s)",
+            rule_id,
+            metadata.source_ip,
+            metadata.destination_ip,
+            metadata.destination_port,
+            metadata.protocol,
+            reason,
+        )
+        return False
+
+    log.info(
+        "ALLOWED rule=%s %s -> %s:%s [%s]",
+        rule_id,
+        metadata.source_ip,
+        metadata.destination_ip,
+        metadata.destination_port,
+        metadata.protocol,
+    )
+    return True
+
+
 def main(argv=None):
     global running
     running = True
@@ -98,62 +153,27 @@ def main(argv=None):
                     break
 
                 try:
-                    metadata = extract_metadata(packet)
-                    action, matched_rule = engine.decide(
-                        metadata.destination_ip,
-                        metadata.destination_port,
-                        metadata.protocol,
+                    should_reinject = process_packet(
+                        packet,
+                        engine,
+                        log,
+                        dry_run=args.dry_run,
                     )
-
-                    rule_id = matched_rule.id if matched_rule else "default-policy"
-                    reason = matched_rule.note if matched_rule else "default policy"
-
-                    if action == "block":
-                        if args.dry_run:
-                            log.warning(
-                                "DRY-RUN WOULD-BLOCK rule=%s %s -> %s:%s [%s] (%s)",
-                                rule_id,
-                                metadata.source_ip,
-                                metadata.destination_ip,
-                                metadata.destination_port,
-                                metadata.protocol,
-                                reason,
-                            )
-                        else:
-                            log.warning(
-                                "BLOCKED rule=%s %s -> %s:%s [%s] (%s)",
-                                rule_id,
-                                metadata.source_ip,
-                                metadata.destination_ip,
-                                metadata.destination_port,
-                                metadata.protocol,
-                                reason,
-                            )
-                            # Drop it: simply don't call divert.send().
-                            continue
-                    else:
-                        log.info(
-                            "ALLOWED rule=%s %s -> %s:%s [%s]",
-                            rule_id,
-                            metadata.source_ip,
-                            metadata.destination_ip,
-                            metadata.destination_port,
-                            metadata.protocol,
-                        )
-
-                    try:
-                        divert.send(packet)
-                    except OSError as exc:
-                        log.error(
-                            "Failed to reinject packet to %s:%s: %s",
-                            metadata.destination_ip,
-                            metadata.destination_port,
-                            exc,
-                        )
-                        return 1
                 except (AttributeError, ValueError, TypeError) as exc:
                     log.error("Failed to process intercepted packet: %s", exc)
                     continue
+
+                if not should_reinject:
+                    continue
+
+                try:
+                    divert.send(packet)
+                except OSError as exc:
+                    log.error(
+                        "Failed to reinject packet: %s",
+                        exc,
+                    )
+                    return 1
     except OSError as exc:
         log.error("WinDivert runtime error: %s", exc)
         return 1
