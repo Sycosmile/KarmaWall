@@ -3,6 +3,7 @@
 A rule looks like:
 
     {
+        "id": "allow-example-https",
         "action": "allow" | "block",
         "ip": "93.184.216.0/24",   # optional, exact IP or CIDR network
         "port": 443,               # optional, exact match on dst port
@@ -22,11 +23,13 @@ of causing unpredictable firewall behaviour.
 import ipaddress
 import json
 import os
+import re
 
 
 VALID_ACTIONS = {"allow", "block"}
 VALID_PROTOCOLS = {"tcp", "udp"}
-VALID_FIELDS = {"action", "ip", "port", "proto", "note"}
+VALID_FIELDS = {"id", "action", "ip", "port", "proto", "note"}
+VALID_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 MIN_PORT = 1
 MAX_PORT = 65535
 
@@ -36,12 +39,27 @@ class RuleValidationError(ValueError):
 
 
 class Rule:
-    def __init__(self, action, ip=None, port=None, proto=None, note=""):
+    def __init__(self, action, ip=None, port=None, proto=None, note="", id=None):
+        self.id = self._validate_id(id)
         self.action = self._validate_action(action)
         self.ip, self.ip_network = self._validate_ip(ip)
         self.port = self._validate_port(port)
         self.proto = self._validate_protocol(proto)
         self.note = self._validate_note(note)
+
+    @staticmethod
+    def _validate_id(rule_id):
+        if rule_id is None:
+            return None
+        if not isinstance(rule_id, str):
+            raise RuleValidationError("Rule id must be a string")
+
+        rule_id = rule_id.strip()
+        if not VALID_ID_PATTERN.fullmatch(rule_id):
+            raise RuleValidationError(
+                "Rule id must be 1-64 characters using only letters, digits, '.', '_' or '-'"
+            )
+        return rule_id
 
     @staticmethod
     def _validate_action(action):
@@ -69,9 +87,13 @@ class Rule:
                 network = ipaddress.ip_network(ip, strict=True)
             else:
                 address = ipaddress.ip_address(ip)
-                network = ipaddress.ip_network(address.exploded + "/" + str(address.max_prefixlen))
+                network = ipaddress.ip_network(
+                    address.exploded + "/" + str(address.max_prefixlen)
+                )
         except ValueError as exc:
-            raise RuleValidationError(f"Invalid IP address or CIDR network: {ip!r}") from exc
+            raise RuleValidationError(
+                f"Invalid IP address or CIDR network: {ip!r}"
+            ) from exc
         return ip, network
 
     @staticmethod
@@ -122,13 +144,17 @@ class Rule:
             fields = ", ".join(sorted(unknown))
             raise RuleValidationError(f"Unknown rule field(s){location}: {fields}")
 
+        if "id" not in data:
+            raise RuleValidationError(f"Rule{location} is missing required field: id")
         if "action" not in data:
             raise RuleValidationError(f"Rule{location} is missing required field: action")
 
         try:
             return cls(**data)
         except TypeError as exc:
-            raise RuleValidationError(f"Invalid rule structure{location}: {exc}") from exc
+            raise RuleValidationError(
+                f"Invalid rule structure{location}: {exc}"
+            ) from exc
         except RuleValidationError as exc:
             raise RuleValidationError(f"Invalid rule{location}: {exc}") from exc
 
@@ -147,8 +173,8 @@ class Rule:
 
     def __repr__(self):
         return (
-            f"<Rule {self.action} ip={self.ip} port={self.port} "
-            f"proto={self.proto} note={self.note!r}>"
+            f"<Rule id={self.id!r} {self.action} ip={self.ip} "
+            f"port={self.port} proto={self.proto} note={self.note!r}>"
         )
 
 
@@ -192,8 +218,15 @@ class RuleEngine:
             raise RuleValidationError("Rules file must contain a JSON array")
 
         validated_rules = []
+        seen_ids = set()
         for index, rule_data in enumerate(data):
-            validated_rules.append(Rule.from_dict(rule_data, index=index))
+            rule = Rule.from_dict(rule_data, index=index)
+            if rule.id in seen_ids:
+                raise RuleValidationError(
+                    f"Duplicate rule id at index {index}: {rule.id!r}"
+                )
+            seen_ids.add(rule.id)
+            validated_rules.append(rule)
 
         self.rules = validated_rules
 
