@@ -201,8 +201,9 @@ class RuleEngine:
     def load(self):
         """Load and validate the complete rule file."""
         if not os.path.exists(self.rules_path):
-            self.rules = []
-            return
+            raise RuleValidationError(
+                f"Rules file does not exist: {self.rules_path}"
+            )
 
         try:
             with open(self.rules_path, "r", encoding="utf-8") as f:
