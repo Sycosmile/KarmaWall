@@ -173,6 +173,16 @@ class TestRuleEngine(unittest.TestCase):
         with self.assertRaises(RuleValidationError):
             RuleEngine(path, default_policy="deny")
 
+    def test_missing_rules_file_is_rejected(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        path = Path(temp_dir.name) / "missing.json"
+
+        with self.assertRaises(RuleValidationError) as ctx:
+            RuleEngine(path)
+
+        self.assertIn("Rules file does not exist", str(ctx.exception))
+
     def test_reload_replaces_rules(self):
         path = self.write_rules([{"id": "block-http", "action": "block", "port": 80}])
         engine = RuleEngine(path)
