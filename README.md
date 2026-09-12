@@ -114,6 +114,12 @@ CIDR networks are supported for range-based policies. For example:
 }
 ```
 
+> **Check this before copying it.** `192.168.1.0/24` is a common home
+> router default range — if it happens to match *your* local network,
+> this rule will block traffic to your own router, printers, NAS, or
+> other LAN devices. Replace it with a subnet you actually intend to
+> block, not your own.
+
 With `DEFAULT_POLICY = "block"` in `config.py`, traffic that matches no
 rule is blocked.
 
