@@ -11,6 +11,7 @@ half-blocked.
 
 import argparse
 import signal
+import struct
 import sys
 
 try:
@@ -163,7 +164,7 @@ def main(argv=None):
                         log,
                         dry_run=args.dry_run,
                     )
-                except (AttributeError, ValueError, TypeError) as exc:
+                except (AttributeError, ValueError, TypeError, struct.error) as exc:
                     log.error("Failed to process intercepted packet: %s", exc)
                     continue
 
